@@ -1,0 +1,17 @@
+[general]
+name=GIS Chat
+description=AI-powered chat assistant that executes GIS operations via natural language
+about=GIS Chat adds an intelligent chat panel to QGIS that understands natural language commands and executes GIS operations. Supports multiple AI providers: Claude, GPT, Gemini (free), Ollama (free/local), and any OpenAI-compatible endpoint.
+version=1.0.0
+qgisMinimumVersion=3.34
+author=Zsolt Zoltan Feher
+email=feher.zsolt@agr.unideb.hu
+repository=https://github.com/Nagyhoho1234/QGISChat
+tracker=https://github.com/Nagyhoho1234/QGISChat/issues
+homepage=https://github.com/Nagyhoho1234/QGISChat
+tags=ai,chat,geoprocessing,natural language,automation,llm
+category=Plugins
+icon=icon.png
+experimental=False
+deprecated=False
+hasProcessingProvider=no
