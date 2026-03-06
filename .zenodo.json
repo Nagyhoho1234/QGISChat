@@ -1,0 +1,38 @@
+{
+  "title": "GIS Chat for QGIS: AI-Powered Chat Assistant Plugin",
+  "description": "A QGIS plugin that provides an AI-powered chat panel for executing geospatial operations via natural language. Part of the GIS Chat cross-platform suite covering ArcGIS Pro, QGIS, and ESA SNAP.",
+  "upload_type": "software",
+  "creators": [
+    {
+      "name": "Feh\u00e9r, Zsolt Zolt\u00e1n",
+      "affiliation": "University of Debrecen, Faculty of Agricultural and Food Sciences and Environmental Management",
+      "orcid": ""
+    }
+  ],
+  "license": "MIT",
+  "keywords": [
+    "GIS",
+    "QGIS",
+    "large language model",
+    "natural language interface",
+    "geospatial",
+    "remote sensing",
+    "AI assistant",
+    "tool calling",
+    "PyQGIS"
+  ],
+  "language": "eng",
+  "access_right": "open",
+  "related_identifiers": [
+    {
+      "identifier": "https://github.com/Nagyhoho1234/GISChat",
+      "relation": "isPartOf",
+      "scheme": "url"
+    },
+    {
+      "identifier": "https://github.com/Nagyhoho1234/SNAPChat",
+      "relation": "isPartOf",
+      "scheme": "url"
+    }
+  ]
+}
