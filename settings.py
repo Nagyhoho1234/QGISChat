@@ -123,3 +123,11 @@ class Settings:
     @classmethod
     def set_show_generated_code(cls, v: bool):
         cls._s().setValue(cls.PREFIX + "show_generated_code", "true" if v else "false")
+
+    @classmethod
+    def gee_project(cls) -> str:
+        return cls._s().value(cls.PREFIX + "gee_project", "")
+
+    @classmethod
+    def set_gee_project(cls, project: str):
+        cls._s().setValue(cls.PREFIX + "gee_project", project)

@@ -5,6 +5,14 @@ from qgis.core import (
 from qgis.utils import iface
 
 
+# Map QGIS data type enum values to human-readable names
+_QGIS_DTYPE_NAMES = {
+    0: "Unknown", 1: "Byte", 2: "UInt16", 3: "Int16", 4: "UInt32",
+    5: "Int32", 6: "Float32", 7: "Float64", 8: "CInt16", 9: "CInt32",
+    10: "CFloat32", 11: "CFloat64",
+}
+
+
 def get_map_context() -> str:
     lines = []
     project = QgsProject.instance()
@@ -48,7 +56,29 @@ def get_map_context() -> str:
 
         elif isinstance(layer, QgsRasterLayer):
             lines.append(f'  - "{layer.name()}" [Raster, {vis}]')
-            lines.append(f"    Size: {layer.width()}x{layer.height()}, Bands: {layer.bandCount()}")
+            band_count = layer.bandCount()
+
+            # Cell size from raster units per pixel
+            try:
+                cell_x = layer.rasterUnitsPerPixelX()
+                cell_y = layer.rasterUnitsPerPixelY()
+                lines.append(f"    Size: {layer.width()}x{layer.height()}, "
+                             f"Cell size: {cell_x:.2f}x{cell_y:.2f}, Bands: {band_count}")
+            except Exception:
+                lines.append(f"    Size: {layer.width()}x{layer.height()}, Bands: {band_count}")
+
+            # Band details (name + data type), up to 20 bands
+            dp = layer.dataProvider()
+            if dp:
+                for b in range(1, min(band_count + 1, 21)):
+                    try:
+                        band_name = dp.generateBandName(b)
+                        dtype_val = dp.dataType(b)
+                        dtype_name = _QGIS_DTYPE_NAMES.get(dtype_val, str(dtype_val))
+                        lines.append(f"      [{b}] {band_name} ({dtype_name})")
+                    except Exception:
+                        pass
+
         else:
             lines.append(f'  - "{layer.name()}" [{layer.type().name}, {vis}]')
 

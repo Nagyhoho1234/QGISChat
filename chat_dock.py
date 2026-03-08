@@ -32,6 +32,7 @@ class ChatDockWidget(QDockWidget):
         self._signals.error.connect(self._on_error)
         self._pending_map_context = ""
         self._is_processing = False
+        self._tool_depth = 0
 
         self._build_ui()
         self._append_system(
@@ -172,6 +173,7 @@ class ChatDockWidget(QDockWidget):
 
         map_context = get_map_context()
         self._pending_map_context = map_context
+        self._tool_depth = 0
 
         # Run LLM call in a background thread to keep UI responsive
         thread = threading.Thread(
@@ -188,13 +190,36 @@ class ChatDockWidget(QDockWidget):
         except Exception as e:
             self._signals.error.emit(str(e))
 
+    _MAX_TOOL_ROUND_TRIPS = 10
+
     def _on_response(self, response):
-        if response.tool_call and response.tool_call["name"] == "run_pyqgis":
-            tc = response.tool_call
+        # Show text if present and no tool calls
+        if not response.has_tool_call:
+            if response.text:
+                self._append_msg("assistant", response.text)
+            self._set_processing(False)
+            return
+
+        if self._tool_depth >= self._MAX_TOOL_ROUND_TRIPS:
+            self._append_system("Stopped: too many consecutive tool calls.")
+            self._set_processing(False)
+            return
+
+        # Execute ALL tool calls and collect results
+        tool_results = []
+        for i, tc in enumerate(response.tool_calls):
+            if tc["name"] != "run_pyqgis":
+                tool_results.append((tc["id"], f"Unknown tool: {tc['name']}"))
+                continue
+
             code = tc["arguments"].get("code", "")
             explanation = tc["arguments"].get("explanation", "")
 
-            display_text = explanation or response.text or "Executing code..."
+            # Show text before first tool call
+            if i == 0 and response.text:
+                self._append_msg("assistant", response.text)
+
+            display_text = explanation or "Executing code..."
             self._append_msg("assistant", display_text)
 
             if Settings.show_generated_code() and code:
@@ -208,28 +233,21 @@ class ChatDockWidget(QDockWidget):
                     QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes
                 )
                 if reply != QMessageBox.Yes:
+                    tool_results.append((tc["id"], "Cancelled by user."))
                     self._append_result("Cancelled by user.", False)
-                    self._send_tool_result(tc["id"], "Cancelled by user.")
-                    return
+                    continue
 
             # Execute code
             result = run_pyqgis(code)
             self._append_result(str(result), result.success)
+            tool_results.append((tc["id"], str(result)))
 
-            # Send tool result back to LLM
-            self._send_tool_result(tc["id"], str(result))
-            return
-
-        # Plain text response
-        if response.text:
-            self._append_msg("assistant", response.text)
-        self._set_processing(False)
-
-    def _send_tool_result(self, tool_call_id: str, result_text: str):
+        # Send ALL tool results back — follow-up comes via signal back to _on_response
+        self._tool_depth += 1
         map_context = self._pending_map_context
         thread = threading.Thread(
             target=self._llm_worker,
-            args=(lambda: self._llm.send_tool_result(tool_call_id, result_text, map_context),),
+            args=(lambda: self._llm.send_tool_results(tool_results, map_context),),
             daemon=True,
         )
         thread.start()
@@ -237,10 +255,10 @@ class ChatDockWidget(QDockWidget):
     def _on_error(self, error_msg: str):
         self._append_system(f"Error: {error_msg}")
 
-        # Reset history on tool sync errors
+        # Rollback instead of clearing full history on tool sync errors
         if "tool_result" in error_msg or "tool_use" in error_msg:
-            self._llm.clear_history()
-            self._append_system("Conversation history reset due to sync error. You can continue chatting.")
+            self._llm.rollback_history(1)
+            self._append_system("History sync error — last message rolled back. Please try again.")
 
         self._set_processing(False)
         self._status_dot.setStyleSheet("color: #F44336; font-size: 14px;")

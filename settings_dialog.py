@@ -64,6 +64,17 @@ class SettingsDialog(QDialog):
         self.show_code_check = QCheckBox("Show generated code in chat")
         form.addRow("", self.show_code_check)
 
+        # GEE Project
+        self.gee_project_edit = QLineEdit()
+        self.gee_project_edit.setPlaceholderText("e.g. my-gee-project (optional)")
+        gee_label = QLabel("GEE Project ID:")
+        form.addRow(gee_label, self.gee_project_edit)
+
+        gee_help = QLabel("Google Earth Engine project. Requires earthengine-api and ee.Authenticate().")
+        gee_help.setStyleSheet("color: #888; font-size: 11px;")
+        gee_help.setWordWrap(True)
+        form.addRow("", gee_help)
+
         layout.addLayout(form)
 
         # Buttons
@@ -118,6 +129,7 @@ class SettingsDialog(QDialog):
         self.max_tokens_spin.setValue(Settings.max_tokens())
         self.confirm_check.setChecked(Settings.confirm_before_execute())
         self.show_code_check.setChecked(Settings.show_generated_code())
+        self.gee_project_edit.setText(Settings.gee_project())
 
     def _save_and_accept(self):
         provider_val = self.provider_combo.currentData()
@@ -128,4 +140,5 @@ class SettingsDialog(QDialog):
         Settings.set_max_tokens(self.max_tokens_spin.value())
         Settings.set_confirm_before_execute(self.confirm_check.isChecked())
         Settings.set_show_generated_code(self.show_code_check.isChecked())
+        Settings.set_gee_project(self.gee_project_edit.text().strip())
         self.accept()

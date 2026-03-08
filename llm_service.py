@@ -1,12 +1,14 @@
 """Unified multi-provider LLM client."""
 import json
+import os
 import uuid
+from datetime import datetime
 from urllib.request import Request, urlopen
 from urllib.error import HTTPError, URLError
 
 from .settings import Settings, LlmProvider, PROVIDER_INFO
 
-SYSTEM_PROMPT = """\
+_SYSTEM_PROMPT_BASE = """\
 You are a GIS assistant embedded in QGIS. You help users perform geospatial tasks
 using natural language. You have access to the current map state (layers, extent, CRS).
 
@@ -36,7 +38,35 @@ Instead, automatically try an alternative approach. For example:
 - If a processing tool fails, try an alternative algorithm or workaround
 - If a layer name is not found, list available layers and pick the closest match
 - If a CRS transformation fails, try a different approach
-Only report failure to the user after you have exhausted reasonable alternatives."""
+Only report failure to the user after you have exhausted reasonable alternatives.
+
+CRITICAL: In QGIS, sys.executable points to qgis-bin.exe, NOT python.exe.
+NEVER use subprocess.run([sys.executable, ...]) — it launches a new QGIS instance.
+For pip install, use: from pip._internal.cli.main import main as _pip; _pip(['install', 'package_name'])"""
+
+_GEE_SECTION = """
+
+Google Earth Engine Integration:
+The user has GEE configured (project: {project}). You can generate Python code that uses
+the earthengine-api (ee) to query, process, and download GEE data.
+
+GEE code guidelines:
+- Initialize with: import ee; ee.Initialize(project='{project}')
+- Use ee.Image, ee.ImageCollection, ee.FeatureCollection for GEE data
+- Use the current map extent or study area from context as default region
+- ee.Image.getDownloadURL() has a 50 MB per-request limit
+- Server-side operations (mosaic, clip, compositing) have no size limit
+- For large areas, estimate size first and split downloads if needed
+- After downloading, add the result as a raster layer to QGIS"""
+
+
+def build_system_prompt():
+    """Build system prompt, appending GEE section if configured."""
+    prompt = _SYSTEM_PROMPT_BASE
+    gee_project = Settings.gee_project()
+    if gee_project:
+        prompt += _GEE_SECTION.format(project=gee_project)
+    return prompt
 
 TOOL_SCHEMA = {
     "type": "object",
@@ -51,7 +81,19 @@ TOOL_SCHEMA = {
 class LlmResponse:
     def __init__(self):
         self.text = ""
-        self.tool_call = None  # dict with id, name, arguments
+        self.tool_calls = []  # list of dicts with id, name, arguments
+
+    @property
+    def tool_call(self):
+        """Convenience: first tool call or None."""
+        return self.tool_calls[0] if self.tool_calls else None
+
+    @property
+    def has_tool_call(self):
+        return len(self.tool_calls) > 0
+
+
+MAX_HISTORY_LENGTH = 40
 
 
 class LlmService:
@@ -61,7 +103,63 @@ class LlmService:
     def clear_history(self):
         self._history.clear()
 
+    def rollback_history(self, count=1):
+        """Remove the last N entries from history."""
+        for _ in range(min(count, len(self._history))):
+            self._history.pop()
+
+    def trim_history(self):
+        """Trim history to MAX_HISTORY_LENGTH, preserving tool_use/tool_result pairs."""
+        if len(self._history) <= MAX_HISTORY_LENGTH:
+            return
+        cut = len(self._history) - MAX_HISTORY_LENGTH
+        # Ensure we don't cut in the middle of a tool_use/tool_result pair
+        # Skip forward past any assistant message that contains tool_use
+        while cut < len(self._history) - 2:
+            msg = self._history[cut]
+            # Anthropic: assistant content may be a list with tool_use blocks
+            if isinstance(msg.get("content"), list):
+                has_tool = any(
+                    isinstance(b, dict) and b.get("type") in ("tool_use", "tool_result")
+                    for b in msg["content"]
+                )
+                if has_tool:
+                    cut += 1
+                    continue
+            # OpenAI: assistant message with tool_calls
+            if msg.get("tool_calls"):
+                cut += 1
+                continue
+            # OpenAI: tool role message
+            if msg.get("role") == "tool":
+                cut += 1
+                continue
+            break
+        self._dump_history_to_debug_log("trim", len(self._history))
+        self._history = self._history[cut:]
+
+    def _dump_history_to_debug_log(self, reason: str, msg_count: int):
+        """Write conversation snapshot to JSONL for debugging."""
+        try:
+            if os.name == "nt":
+                log_dir = os.path.join(os.environ.get("APPDATA", "."), "QGISChat", "logs")
+            else:
+                log_dir = os.path.expanduser("~/.local/share/QGISChat/logs")
+            os.makedirs(log_dir, exist_ok=True)
+            path = os.path.join(log_dir, f"conversation_{datetime.now():%Y-%m-%d}.jsonl")
+            entry = {
+                "timestamp": datetime.now().isoformat(),
+                "reason": reason,
+                "messageCount": msg_count,
+                "messages": self._history,
+            }
+            with open(path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        except Exception:
+            pass  # Debug logging must never break the main flow
+
     def send(self, user_message: str, map_context: str) -> LlmResponse:
+        self.trim_history()
         provider = Settings.provider()
         if PROVIDER_INFO[provider]["needs_key"] and not Settings.api_key():
             raise ValueError(
@@ -76,6 +174,8 @@ class LlmService:
         return fn(user_message, map_context)
 
     def send_tool_result(self, tool_call_id: str, result: str, map_context: str) -> LlmResponse:
+        """Send a single tool result (legacy, used by non-Anthropic providers)."""
+        self.trim_history()
         provider = Settings.provider()
         dispatch = {
             LlmProvider.Anthropic: self._send_anthropic_tool_result,
@@ -83,6 +183,30 @@ class LlmService:
         }
         fn = dispatch.get(provider, self._send_openai_tool_result)
         return fn(tool_call_id, result, map_context)
+
+    def send_tool_results(self, results: list, map_context: str) -> LlmResponse:
+        """Send multiple tool results in one message (required by Anthropic).
+
+        Args:
+            results: list of (tool_call_id, result_text) tuples
+            map_context: current map state
+        """
+        self.trim_history()
+        provider = Settings.provider()
+        if provider == LlmProvider.Anthropic:
+            return self._send_anthropic_tool_results(results, map_context)
+        elif provider == LlmProvider.GoogleGemini:
+            # Gemini: send results one by one (no batch requirement)
+            resp = LlmResponse()
+            for tc_id, result in results:
+                resp = self._send_gemini_tool_result(tc_id, result, map_context)
+            return resp
+        else:
+            # OpenAI: send results one by one
+            resp = LlmResponse()
+            for tc_id, result in results:
+                resp = self._send_openai_tool_result(tc_id, result, map_context)
+            return resp
 
     # ---- HTTP helper ----
 
@@ -109,7 +233,7 @@ class LlmService:
         body = {
             "model": Settings.model(),
             "max_tokens": Settings.max_tokens(),
-            "system": SYSTEM_PROMPT + "\n\nCurrent QGIS state:\n" + map_context,
+            "system": build_system_prompt() + "\n\nCurrent QGIS state:\n" + map_context,
             "messages": self._history,
             "tools": [{
                 "name": "run_pyqgis",
@@ -126,14 +250,20 @@ class LlmService:
         return self._parse_anthropic(data)
 
     def _send_anthropic_tool_result(self, tool_call_id, result, map_context):
-        self._history.append({
-            "role": "user",
-            "content": [{"type": "tool_result", "tool_use_id": tool_call_id, "content": result}],
-        })
+        """Send a single tool result (kept for compatibility)."""
+        return self._send_anthropic_tool_results([(tool_call_id, result)], map_context)
+
+    def _send_anthropic_tool_results(self, results, map_context):
+        """Send multiple tool results in one user message (Anthropic requires this)."""
+        content = [
+            {"type": "tool_result", "tool_use_id": tc_id, "content": result_text}
+            for tc_id, result_text in results
+        ]
+        self._history.append({"role": "user", "content": content})
         body = {
             "model": Settings.model(),
             "max_tokens": Settings.max_tokens(),
-            "system": SYSTEM_PROMPT + "\n\nCurrent QGIS state:\n" + map_context,
+            "system": build_system_prompt() + "\n\nCurrent QGIS state:\n" + map_context,
             "messages": self._history,
             "tools": [{
                 "name": "run_pyqgis",
@@ -156,11 +286,11 @@ class LlmService:
             if block.get("type") == "text":
                 resp.text += block.get("text", "")
             elif block.get("type") == "tool_use":
-                resp.tool_call = {
+                resp.tool_calls.append({
                     "id": block["id"],
                     "name": block["name"],
                     "arguments": block["input"],
-                }
+                })
         return resp
 
     # ---- OpenAI / Ollama / Compatible ----
@@ -168,7 +298,7 @@ class LlmService:
     def _send_openai_compatible(self, user_message, map_context):
         self._history.append({"role": "user", "content": user_message})
         messages = [
-            {"role": "system", "content": SYSTEM_PROMPT + "\n\nCurrent QGIS state:\n" + map_context},
+            {"role": "system", "content": build_system_prompt() + "\n\nCurrent QGIS state:\n" + map_context},
         ] + self._history
         body = {
             "model": Settings.model(),
@@ -195,7 +325,7 @@ class LlmService:
     def _send_openai_tool_result(self, tool_call_id, result, map_context):
         self._history.append({"role": "tool", "tool_call_id": tool_call_id, "content": result})
         messages = [
-            {"role": "system", "content": SYSTEM_PROMPT + "\n\nCurrent QGIS state:\n" + map_context},
+            {"role": "system", "content": build_system_prompt() + "\n\nCurrent QGIS state:\n" + map_context},
         ] + self._history
         body = {
             "model": Settings.model(),
@@ -225,13 +355,13 @@ class LlmService:
         resp.text = message.get("content") or ""
         tool_calls = message.get("tool_calls")
         if tool_calls:
-            tc = tool_calls[0]
-            fn = tc["function"]
-            resp.tool_call = {
-                "id": tc["id"],
-                "name": fn["name"],
-                "arguments": json.loads(fn.get("arguments", "{}")),
-            }
+            for tc in tool_calls:
+                fn = tc["function"]
+                resp.tool_calls.append({
+                    "id": tc["id"],
+                    "name": fn["name"],
+                    "arguments": json.loads(fn.get("arguments", "{}")),
+                })
         return resp
 
     # ---- Google Gemini ----
@@ -240,7 +370,7 @@ class LlmService:
         self._history.append({"role": "user", "parts": [{"text": user_message}]})
         url = f"{Settings.effective_endpoint()}/models/{Settings.model()}:generateContent?key={Settings.api_key()}"
         contents = [
-            {"role": "user", "parts": [{"text": SYSTEM_PROMPT + "\n\nCurrent QGIS state:\n" + map_context}]},
+            {"role": "user", "parts": [{"text": build_system_prompt() + "\n\nCurrent QGIS state:\n" + map_context}]},
             {"role": "model", "parts": [{"text": "Understood. I'm ready to help with GIS tasks."}]},
         ] + self._history
         body = {
@@ -265,7 +395,7 @@ class LlmService:
         })
         url = f"{Settings.effective_endpoint()}/models/{Settings.model()}:generateContent?key={Settings.api_key()}"
         contents = [
-            {"role": "user", "parts": [{"text": SYSTEM_PROMPT + "\n\nCurrent QGIS state:\n" + map_context}]},
+            {"role": "user", "parts": [{"text": build_system_prompt() + "\n\nCurrent QGIS state:\n" + map_context}]},
             {"role": "model", "parts": [{"text": "Understood."}]},
         ] + self._history
         body = {"contents": contents}
@@ -282,9 +412,9 @@ class LlmService:
                 resp.text += part["text"]
             if "functionCall" in part:
                 fc = part["functionCall"]
-                resp.tool_call = {
+                resp.tool_calls.append({
                     "id": "gemini_" + uuid.uuid4().hex[:8],
                     "name": fc["name"],
                     "arguments": fc["args"],
-                }
+                })
         return resp
