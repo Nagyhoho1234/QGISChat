@@ -3,17 +3,20 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![QGIS 3.34+](https://img.shields.io/badge/QGIS-3.34%2B-589632.svg)](https://qgis.org)
 
-AI-powered chat assistant for QGIS. Ask questions in natural language and let the AI execute GIS operations for you.
+AI-powered chat assistant for QGIS. Ask questions in natural language and let the AI execute GIS operations for you — including Google Earth Engine integration.
 
 ![GIS Chat Screenshot](docs/screenshot.png)
 
 ## Features
 
 - **Natural language GIS operations** -- describe what you want, get it done
-- **Map context awareness** -- automatically reads your layers, fields, extent, and CRS
+- **Map context awareness** -- automatically reads your layers, fields, extent, CRS, and raster band info
 - **PyQGIS code generation & execution** -- generates and runs Python code directly in QGIS
+- **Google Earth Engine integration** -- query, process, and download GEE data directly from the chat
 - **Multi-provider support** -- choose the AI backend that works for you
+- **Multi-tool execution** -- handles complex tasks requiring multiple sequential operations
 - **Automatic error recovery** -- retries alternative approaches when a tool fails
+- **Conversation history management** -- smart truncation with debug JSONL logging
 
 ### Supported AI Providers
 
@@ -42,6 +45,25 @@ AI-powered chat assistant for QGIS. Ask questions in natural language and let th
    - macOS: `~/Library/Application Support/QGIS/QGIS3/profiles/default/python/plugins/`
 3. Restart QGIS and enable "GIS Chat" in **Plugins > Manage and Install Plugins**
 
+## Google Earth Engine Setup (Optional)
+
+GIS Chat can query, process, and download data from Google Earth Engine directly. To enable:
+
+1. **Install the GEE Python package** in your QGIS Python environment:
+   ```
+   pip install earthengine-api
+   ```
+2. **Authenticate** (one-time):
+   ```python
+   import ee
+   ee.Authenticate()
+   ```
+3. **Configure in GIS Chat** -- go to Settings and enter your GEE project ID (e.g. `my-gee-project`).
+
+If you don't have a GEE project, create one at [code.earthengine.google.com](https://code.earthengine.google.com/).
+
+After setup, you can ask things like *"Load recent Sentinel-2 NDVI for my study area from GEE"* and the AI will handle the full workflow.
+
 ## Usage
 
 1. Click the **GIS Chat** button in the toolbar (or **Plugins > GIS Chat > GIS Chat**)
@@ -58,6 +80,7 @@ AI-powered chat assistant for QGIS. Ask questions in natural language and let th
 | "Add a new text field called 'Status' to parcels" | Runs `native:addfieldtoattributestable` |
 | "What CRS is this project using?" | Reads map context and answers directly |
 | "Export selected features to GeoPackage" | Generates and runs the export code |
+| "Load recent Sentinel-2 NDVI from GEE for my area" | Queries GEE, downloads, and adds the raster to QGIS |
 
 ## Project Structure
 
