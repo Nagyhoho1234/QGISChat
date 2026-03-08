@@ -1,28 +1,23 @@
 {
-  "title": "GIS Chat for QGIS: AI-Powered Chat Assistant Plugin",
-  "description": "A QGIS plugin that provides an AI-powered chat panel for executing geospatial operations via natural language. Part of the GIS Chat cross-platform suite covering ArcGIS Pro, QGIS, and ESA SNAP.",
-  "upload_type": "software",
+  "title": "GIS Chat for QGIS: AI-Powered Natural Language Assistant",
+  "description": "GIS Chat for QGIS is an open-source plugin (Python/PyQt5) that embeds an LLM-powered chat panel directly inside QGIS. Users describe geospatial operations in natural language; the plugin injects live workspace context (layers, fields, CRS, selections) into the prompt and the LLM generates and executes PyQGIS/Processing code via structured tool calling. Zero external dependencies beyond the Python standard library. Supports five LLM providers including free options (Google Gemini, Ollama). Optional Google Earth Engine integration enables satellite data retrieval from the chat panel.",
   "creators": [
     {
       "name": "Feh\u00e9r, Zsolt Zolt\u00e1n",
-      "affiliation": "University of Debrecen, Faculty of Agricultural and Food Sciences and Environmental Management",
+      "affiliation": "University of Debrecen",
       "orcid": "0009-0007-6659-4197"
     }
   ],
   "license": "MIT",
   "keywords": [
-    "GIS",
     "QGIS",
     "large language model",
     "natural language interface",
-    "geospatial",
-    "remote sensing",
-    "AI assistant",
+    "GIS automation",
+    "PyQGIS",
     "tool calling",
-    "PyQGIS"
+    "Google Earth Engine"
   ],
-  "language": "eng",
-  "access_right": "open",
   "related_identifiers": [
     {
       "identifier": "https://github.com/Nagyhoho1234/GISChat",
@@ -34,5 +29,7 @@
       "relation": "isPartOf",
       "scheme": "url"
     }
-  ]
+  ],
+  "upload_type": "software",
+  "access_right": "open"
 }
