@@ -50,14 +50,70 @@ Google Earth Engine Integration:
 The user has GEE configured (project: {project}). You can generate Python code that uses
 the earthengine-api (ee) to query, process, and download GEE data.
 
-GEE code guidelines:
-- Initialize with: import ee; ee.Initialize(project='{project}')
-- Use ee.Image, ee.ImageCollection, ee.FeatureCollection for GEE data
-- Use the current map extent or study area from context as default region
-- ee.Image.getDownloadURL() has a 50 MB per-request limit
+CRITICAL GEE DOWNLOAD RULES -- follow this EXACT pattern every time:
+1. NEVER call getDownloadURL without handling the 50 MB limit. NEVER degrade resolution.
+2. Use native scale: S1 GRD=10, S2 B2/B3/B4/B8=10m, B5-B8A/B11/B12=20m, B1/B9/B10=60m.
+3. ALWAYS use this adaptive tiled download with automatic retry:
+
+```python
+import ee, os, math, urllib.request
+from osgeo import gdal
+gdal.UseExceptions()
+gdal.SetConfigOption('CPL_LOG', 'NUL')  # suppress noisy TIFF warnings
+ee.Initialize(project='{project}')
+# ... build image ...
+SCALE = 10  # native resolution
+region = [lon_min, lat_min, lon_max, lat_max]
+out_dir = os.path.join(os.path.expanduser('~'), 'Documents', 'ProjectName')
+os.makedirs(out_dir, exist_ok=True)
+
+def download_tiled(image, region, scale, out_dir, grid=1):
+    lon_min, lat_min, lon_max, lat_max = region
+    lat_step = (lat_max - lat_min) / grid
+    lon_step = (lon_max - lon_min) / grid
+    tile_paths = []
+    for r in range(grid):
+        for c in range(grid):
+            tile_region = ee.Geometry.Rectangle([
+                lon_min + c*lon_step, lat_min + r*lat_step,
+                lon_min + (c+1)*lon_step, lat_min + (r+1)*lat_step])
+            tile_path = os.path.join(out_dir, f'tile_{{r}}_{{c}}.tif')
+            try:
+                url = image.getDownloadURL({{'scale': scale, 'region': tile_region,
+                      'format': 'GEO_TIFF', 'filePerBand': False}})
+                urllib.request.urlretrieve(url, tile_path)
+                tile_paths.append(tile_path)
+                sz = os.path.getsize(tile_path) / 1e6
+                print(f'[OK] tile_{{r}}_{{c}}.tif ({{sz:.1f}} MB)')
+            except Exception as e:
+                err = str(e)
+                if 'must be less than or equal to' in err or '400' in err or 'Bad Request' in err:
+                    print(f'[RETRY] Grid {{grid}}x{{grid}} too coarse -> {{grid*2}}x{{grid*2}}')
+                    for p in tile_paths:
+                        if os.path.exists(p): os.remove(p)
+                    return download_tiled(image, region, scale, out_dir, grid*2)
+                raise
+    return tile_paths
+
+tile_paths = download_tiled(image, region, SCALE, out_dir)
+merged = os.path.join(out_dir, 'result.tif')
+gdal.Warp(merged, tile_paths)  # just merge, no extra options
+for p in tile_paths: os.remove(p)
+print(f'[DONE] {{merged}}')
+```
+
+4. After downloading, add the merged GeoTIFF as a raster layer to QGIS:
+   iface.addRasterLayer(merged, 'layer_name')
+
+IMPORTANT GDAL rules:
+- Always call gdal.UseExceptions() and gdal.SetConfigOption('CPL_LOG', 'NUL') at the top.
+- gdal.Warp(dest, srcs) -- do NOT pass options=['...'] as a list. Use keyword args if needed: gdal.Warp(dest, srcs, creationOptions=['COMPRESS=LZW']).
+
+Other GEE rules:
 - Server-side operations (mosaic, clip, compositing) have no size limit
-- For large areas, estimate size first and split downloads if needed
-- After downloading, add the result as a raster layer to QGIS"""
+- GEE List.get() only works for index 0-99. For collections >100 images, use .limit(N) or .aggregate_array() + .getInfo()
+- Sentinel-1 system:index is the full product name (e.g. S1A_IW_GRDH_...), NOT a date. Use system:time_start (ms epoch) for dates.
+- Use datetime.datetime.fromtimestamp(ts/1000, tz=datetime.timezone.utc) instead of deprecated utcfromtimestamp()"""
 
 
 def build_system_prompt():

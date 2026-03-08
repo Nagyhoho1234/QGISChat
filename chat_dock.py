@@ -123,6 +123,11 @@ class ChatDockWidget(QDockWidget):
             f'<p style="margin:2px 0 2px 8px; color:{color}; font-size:12px;">'
             f'<b>{prefix}:</b> {_escape(result_str)}</p>'
         )
+        if not success and self._tool_depth < self._MAX_TOOL_ROUND_TRIPS:
+            html += (
+                '<p style="margin:2px 0 2px 8px; color:#F57C00; font-size:12px; font-style:italic;">'
+                'Analyzing error and working on a fix...</p>'
+            )
         self._chat_display.append(html)
         self._scroll_bottom()
 
